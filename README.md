@@ -13,7 +13,7 @@
 ## Структура
 
 ```text
-nutriday/
+caloriesss/
 ├── app.py             # Python-сервер и список продуктов
 ├── App.jsx            # интерфейс React
 ├── index.html         # страница приложения
