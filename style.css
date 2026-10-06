@@ -1,0 +1,18 @@
+body { margin: 0; font: 16px/1.45 Arial, sans-serif; color: #252525; background: #f5f6f2; }
+main { max-width: 780px; margin: auto; padding: 20px; }
+header { padding: 8px 0; }
+h1 { margin-bottom: 0; }
+header p { margin-top: 0; color: #666; }
+nav { display: flex; gap: 8px; margin-bottom: 18px; }
+section { background: white; padding: 18px; margin: 14px 0; border-radius: 10px; }
+h2 { margin-top: 0; }
+h3 { margin-bottom: 8px; }
+form { display: grid; gap: 10px; }
+label { display: grid; gap: 4px; max-width: 420px; }
+input, select { box-sizing: border-box; width: 100%; padding: 8px; font: inherit; }
+button { padding: 8px 12px; border: 1px solid #7b9b72; border-radius: 6px; background: white; cursor: pointer; }
+button.active, button[type=submit] { background: #dcebd6; }
+.row { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #eee; }
+.row button { flex: none; }
+.message { padding: 10px; background: #fff4ce; border-radius: 6px; }
+@media (max-width: 550px) { main { padding: 10px; } .row { align-items: flex-start; } }
