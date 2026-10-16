@@ -31,6 +31,12 @@ class DiaryEntry(BaseModel):
     portion_name: str = Field(default="", max_length=50)
 
 
+class Activity(BaseModel):
+    day: date
+    name: str = Field(min_length=1, max_length=80)
+    kcal: float = Field(gt=0, le=10000)
+
+
 def query(sql, values=()):
     with sqlite3.connect(DB) as db:
         db.row_factory = sqlite3.Row
@@ -60,6 +66,11 @@ def init_db():
                 FOREIGN KEY (product_id) REFERENCES products(id)
             );
             CREATE INDEX IF NOT EXISTS diary_day ON diary(day);
+            CREATE TABLE IF NOT EXISTS activities (
+                id INTEGER PRIMARY KEY, day TEXT NOT NULL,
+                name TEXT NOT NULL, kcal REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS activities_day ON activities(day);
         """)
         if db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0:
             products = [
@@ -153,4 +164,28 @@ def delete_diary(entry_id: int):
     if not query("SELECT id FROM diary WHERE id = ?", (entry_id,)):
         raise HTTPException(404, "Запись не найдена")
     query("DELETE FROM diary WHERE id = ?", (entry_id,))
+    return {"ok": True}
+
+
+@app.get("/api/activities")
+def get_activities(day: date):
+    entries = query("SELECT * FROM activities WHERE day = ? ORDER BY id", (day.isoformat(),))
+    return {"entries": entries, "total": round(sum(item["kcal"] for item in entries), 1)}
+
+
+@app.post("/api/activities", status_code=201)
+def add_activity(activity: Activity):
+    if not activity.name.strip():
+        raise HTTPException(422, "Введи название активности")
+    return query(
+        "INSERT INTO activities (day, name, kcal) VALUES (?, ?, ?) RETURNING *",
+        (activity.day.isoformat(), activity.name.strip(), activity.kcal),
+    )[0]
+
+
+@app.delete("/api/activities/{activity_id}")
+def delete_activity(activity_id: int):
+    if not query("SELECT id FROM activities WHERE id = ?", (activity_id,)):
+        raise HTTPException(404, "Активность не найдена")
+    query("DELETE FROM activities WHERE id = ?", (activity_id,))
     return {"ok": True}

@@ -24,6 +24,9 @@ function App() {
   const [meal, setMeal] = useState('Завтрак');
   const [day, setDay] = useState(today);
   const [diary, setDiary] = useState({ entries: [], total: {} });
+  const [activities, setActivities] = useState({ entries: [], total: 0 });
+  const [activityName, setActivityName] = useState('');
+  const [burnedKcal, setBurnedKcal] = useState('');
   const [portions, setPortions] = useState([]);
   const [portionId, setPortionId] = useState('');
   const [portionName, setPortionName] = useState('');
@@ -37,7 +40,17 @@ function App() {
   }, []);
 
   useEffect(() => {
-    api('/diary?day=' + day).then(setDiary).catch(error => setMessage(error.message));
+    let cancelled = false;
+    setDiary({ entries: [], total: {} });
+    setActivities({ entries: [], total: 0 });
+    if (!day) return;
+    api('/diary?day=' + day).then(data => {
+      if (!cancelled) setDiary(data);
+    }).catch(error => { if (!cancelled) setMessage(error.message); });
+    api('/activities?day=' + day).then(data => {
+      if (!cancelled) setActivities(data);
+    }).catch(error => { if (!cancelled) setMessage(error.message); });
+    return () => { cancelled = true; };
   }, [day]);
 
   useEffect(() => {
@@ -108,6 +121,28 @@ function App() {
     } catch (error) { setMessage(error.message); }
   }
 
+  async function addActivity(event) {
+    event.preventDefault();
+    if (!activityName.trim()) return setMessage('Введи название активности');
+    try {
+      await api('/activities', 'POST', {
+        day, name: activityName.trim(), kcal: Number(burnedKcal),
+      });
+      setActivities(await api('/activities?day=' + day));
+      setActivityName('');
+      setBurnedKcal('');
+      setMessage('Активность добавлена');
+    } catch (error) { setMessage(error.message); }
+  }
+
+  async function removeActivity(id) {
+    try {
+      await api('/activities/' + id, 'DELETE');
+      setActivities(await api('/activities?day=' + day));
+      setMessage('Активность удалена');
+    } catch (error) { setMessage(error.message); }
+  }
+
   return (
     <main>
       <header>
@@ -125,10 +160,13 @@ function App() {
       {tab === 'Дневник' && <>
         <section>
           <h2>Дневник за день</h2>
-          <label>Дата <input type="date" value={day}
+          <label>Дата <input type="date" required value={day}
             onChange={event => setDay(event.target.value)} /></label>
           <p>Всего: {diary.total.kcal || 0} ккал · Б {diary.total.protein || 0} г ·
             Ж {diary.total.fat || 0} г · У {diary.total.carbs || 0} г</p>
+          <p>Активность: {activities.total} ккал · Еда минус активность: {
+            Math.round(((diary.total.kcal || 0) - activities.total) * 10) / 10
+          } ккал</p>
           {diary.entries.length === 0 && <p>За этот день пока нет записей.</p>}
           {meals.map(name => {
             const entries = diary.entries.filter(item => item.meal === name);
@@ -141,6 +179,24 @@ function App() {
               </div>)}
             </div>;
           })}
+        </section>
+        <section>
+          <h2>Физическая активность</h2>
+          <p>Записи за {day}. Введи название и калории с трекера вручную.</p>
+          {activities.entries.length === 0 && <p>За этот день активностей пока нет.</p>}
+          {activities.entries.map(item => <div className="row" key={item.id}>
+            <span>{item.name} · {item.kcal} ккал</span>
+            <button onClick={() => removeActivity(item.id)}>Удалить</button>
+          </div>)}
+          <form onSubmit={addActivity}>
+            <label>Активность <input required maxLength="80" value={activityName}
+              onChange={event => setActivityName(event.target.value)}
+              placeholder="Например, прогулка" /></label>
+            <label>Сожжено ккал <input required type="number" min="0.1" max="10000"
+              step="0.1" value={burnedKcal}
+              onChange={event => setBurnedKcal(event.target.value)} /></label>
+            <button type="submit" disabled={!day}>Добавить активность</button>
+          </form>
         </section>
         <section>
           <h2>Добавить приём пищи</h2>
