@@ -1,6 +1,7 @@
 import sqlite3
 from datetime import date
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -37,6 +38,35 @@ class Activity(BaseModel):
     kcal: float = Field(gt=0, le=10000)
 
 
+
+ACTIVITY_FACTORS = {"low": 1.2, "light": 1.375, "moderate": 1.55, "high": 1.725}
+GOAL_FACTORS = {"lose": 0.9, "maintain": 1.0, "gain": 1.1}
+
+
+class Profile(BaseModel):
+    sex: Literal["male", "female"]
+    age: int = Field(ge=19, le=78)
+    height: float = Field(ge=120, le=230, allow_inf_nan=False)
+    weight: float = Field(ge=35, le=250, allow_inf_nan=False)
+    activity: Literal["low", "light", "moderate", "high"]
+    goal: Literal["lose", "maintain", "gain"]
+
+
+def calculate_goal(profile: Profile):
+    offset = 5 if profile.sex == "male" else -161
+    resting = 10 * profile.weight + 6.25 * profile.height - 5 * profile.age + offset
+    maintenance = resting * ACTIVITY_FACTORS[profile.activity]
+    target = maintenance * GOAL_FACTORS[profile.goal]
+    
+    minimum = 1500 if profile.sex == "male" else 1200
+    return {
+        "resting_kcal": round(resting),
+        "maintenance_kcal": round(maintenance),
+        "target_kcal": round(max(target, minimum)),
+        "minimum_applied": target < minimum,
+    }
+
+
 def query(sql, values=()):
     with sqlite3.connect(DB) as db:
         db.row_factory = sqlite3.Row
@@ -71,6 +101,12 @@ def init_db():
                 name TEXT NOT NULL, kcal REAL NOT NULL
             );
             CREATE INDEX IF NOT EXISTS activities_day ON activities(day);
+            CREATE TABLE IF NOT EXISTS profile (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                sex TEXT NOT NULL, age INTEGER NOT NULL,
+                height REAL NOT NULL, weight REAL NOT NULL,
+                activity TEXT NOT NULL, goal TEXT NOT NULL
+            );
         """)
         if db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0:
             products = [
@@ -189,3 +225,24 @@ def delete_activity(activity_id: int):
         raise HTTPException(404, "Активность не найдена")
     query("DELETE FROM activities WHERE id = ?", (activity_id,))
     return {"ok": True}
+
+
+@app.get("/api/profile")
+def get_profile():
+    rows = query("SELECT sex, age, height, weight, activity, goal FROM profile WHERE id = 1")
+    if not rows:
+        return {"profile": None, "calculation": None}
+    profile = Profile(**rows[0])
+    return {"profile": profile.model_dump(), "calculation": calculate_goal(profile)}
+
+
+@app.put("/api/profile")
+def save_profile(profile: Profile):
+    query("""
+        INSERT INTO profile (id, sex, age, height, weight, activity, goal)
+        VALUES (1, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            sex = excluded.sex, age = excluded.age, height = excluded.height,
+            weight = excluded.weight, activity = excluded.activity, goal = excluded.goal
+    """, (profile.sex, profile.age, profile.height, profile.weight, profile.activity, profile.goal))
+    return {"profile": profile.model_dump(), "calculation": calculate_goal(profile)}

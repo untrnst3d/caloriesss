@@ -1,9 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
+import { getDayProgress } from './dailyGoal.js';
 
 const today = new Date().toLocaleDateString('en-CA');
 const emptyProduct = { name: '', kcal: '', protein: '', fat: '', carbs: '' };
+const emptyProfile = { sex: 'female', age: '', height: '', weight: '', activity: 'low', goal: 'maintain' };
+const activityLabels = { low: 'Низкая — в основном сидя', light: 'Лёгкая — немного движения',
+  moderate: 'Средняя — регулярные нагрузки', high: 'Высокая — интенсивные нагрузки' };
+const goalLabels = { lose: 'Похудеть', maintain: 'Сохранить вес', gain: 'Набрать вес' };
 const meals = ['Завтрак', 'Обед', 'Ужин', 'Перекус'];
 
 async function api(path, method = 'GET', data) {
@@ -12,7 +17,13 @@ async function api(path, method = 'GET', data) {
     headers: data ? { 'Content-Type': 'application/json' } : {},
     body: data ? JSON.stringify(data) : undefined,
   });
-  if (!response.ok) throw new Error('Не удалось сохранить или загрузить данные');
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const message = typeof body.detail === 'string' ? body.detail
+      : response.status === 422 ? 'Проверь заполнение полей и допустимые значения'
+      : 'Не удалось сохранить или загрузить данные';
+    throw new Error(message);
+  }
   return response.json();
 }
 
@@ -34,6 +45,47 @@ function App() {
   const [newProduct, setNewProduct] = useState(emptyProduct);
   const [search, setSearch] = useState('');
   const [message, setMessage] = useState('');
+  const [profileForm, setProfileForm] = useState(emptyProfile);
+  const [profileData, setProfileData] = useState(null);
+  const [profileStatus, setProfileStatus] = useState('loading');
+  const [profileRequest, setProfileRequest] = useState(0);
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setProfileStatus('loading');
+    api('/profile').then(data => {
+      if (cancelled) return;
+      setProfileData(data);
+      setProfileForm(data.profile || emptyProfile);
+      setProfileStatus('ready');
+    }).catch(() => {
+      if (!cancelled) setProfileStatus('error');
+    });
+    return () => { cancelled = true; };
+  }, [profileRequest]);
+
+  function changeProfile(event) {
+    const { name, value } = event.target;
+    setProfileForm(current => ({ ...current, [name]: value }));
+  }
+
+  async function saveProfile(event) {
+    event.preventDefault();
+    if (profileStatus !== 'ready' || savingProfile) return;
+    setSavingProfile(true);
+    setMessage('');
+    try {
+      const saved = await api('/profile', 'PUT', {
+        ...profileForm, age: Number(profileForm.age),
+        height: Number(profileForm.height), weight: Number(profileForm.weight),
+      });
+      setProfileData(saved);
+      setProfileForm(saved.profile);
+      setMessage('Профиль сохранён. Дневная цель пересчитана');
+    } catch (error) { setMessage(error.message); }
+    finally { setSavingProfile(false); }
+  }
 
   useEffect(() => {
     api('/products').then(setProducts).catch(error => setMessage(error.message));
@@ -61,6 +113,7 @@ function App() {
     setGrams(100);
   }, [productId]);
 
+  const progress = getDayProgress(profileData?.calculation?.target_kcal, diary.total.kcal || 0);
   const product = products.find(item => item.id === Number(productId));
   const shownProducts = products.filter(item =>
     item.name.toLowerCase().includes(search.toLowerCase())
@@ -150,7 +203,7 @@ function App() {
         <p>Учёт питания</p>
       </header>
       <nav>
-        {['Дневник', 'Продукты'].map(name =>
+        {['Дневник', 'Продукты', 'Профиль'].map(name =>
           <button key={name} className={tab === name ? 'active' : ''}
             onClick={() => { setTab(name); setMessage(''); }}>{name}</button>
         )}
@@ -162,11 +215,24 @@ function App() {
           <h2>Дневник за день</h2>
           <label>Дата <input type="date" required value={day}
             onChange={event => setDay(event.target.value)} /></label>
+          <div className="daily-goal">
+            <h3>Дневная цель</h3>
+            {profileStatus === 'loading' && <p>Загружаем профиль…</p>}
+            {profileStatus === 'error' && <p>Не удалось загрузить профиль. <button
+              onClick={() => setProfileRequest(value => value + 1)}>Повторить загрузку</button></p>}
+            {profileStatus === 'ready' && (progress ? <>
+              <p>Цель: {progress.target} ккал · Съедено: {progress.eaten} ккал</p>
+              <p>{progress.remaining >= 0 ? `Осталось: ${progress.remaining}`
+                : `Выше цели на: ${Math.abs(progress.remaining)}`} ккал</p>
+              <progress aria-label="Доля дневной цели" max="100" value={progress.percent} />
+              <p className="hint">Текущая цель профиля применяется ко всем выбранным датам.
+                Тренировки не увеличивают её автоматически.</p>
+            </> : <p>Заполни анкету, чтобы увидеть дневную цель. <button
+              onClick={() => setTab('Профиль')}>Заполнить профиль</button></p>)}
+          </div>
           <p>Всего: {diary.total.kcal || 0} ккал · Б {diary.total.protein || 0} г ·
             Ж {diary.total.fat || 0} г · У {diary.total.carbs || 0} г</p>
-          <p>Активность: {activities.total} ккал · Еда минус активность: {
-            Math.round(((diary.total.kcal || 0) - activities.total) * 10) / 10
-          } ккал</p>
+          <p>Активность за день: {activities.total} ккал (учитывается отдельно).</p>
           {diary.entries.length === 0 && <p>За этот день пока нет записей.</p>}
           {meals.map(name => {
             const entries = diary.entries.filter(item => item.meal === name);
@@ -234,6 +300,48 @@ function App() {
           </form>
         </section>
       </>}
+
+      {tab === 'Профиль' && <section>
+        <h2>Мой профиль</h2>
+        <p>Ориентировочный расчёт для взрослых 19–78 лет. При заболеваниях,
+          беременности или кормлении цель питания нужно согласовать со специалистом.</p>
+        {profileStatus === 'loading' && <p>Загружаем профиль…</p>}
+        {profileStatus === 'error' && <p>Не удалось загрузить профиль. <button
+          onClick={() => setProfileRequest(value => value + 1)}>Повторить загрузку</button></p>}
+        <form onSubmit={saveProfile}>
+          <fieldset disabled={profileStatus !== 'ready' || savingProfile}>
+            <label>Пол для расчёта <select name="sex" value={profileForm.sex} onChange={changeProfile}>
+              <option value="female">Женский</option><option value="male">Мужской</option>
+            </select></label>
+            <label>Возраст, лет <input name="age" type="number" min="19" max="78"
+              step="1" required value={profileForm.age} onChange={changeProfile} /></label>
+            <label>Рост, см <input name="height" type="number" min="120" max="230"
+              step="0.1" required value={profileForm.height} onChange={changeProfile} /></label>
+            <label>Вес, кг <input name="weight" type="number" min="35" max="250"
+              step="0.1" required value={profileForm.weight} onChange={changeProfile} /></label>
+            <label>Уровень активности <select name="activity" value={profileForm.activity} onChange={changeProfile}>
+              {Object.entries(activityLabels).map(([value, label]) =>
+                <option key={value} value={value}>{label}</option>)}
+            </select></label>
+            <label>Цель <select name="goal" value={profileForm.goal} onChange={changeProfile}>
+              {Object.entries(goalLabels).map(([value, label]) =>
+                <option key={value} value={value}>{label}</option>)}
+            </select></label>
+            <button type="submit">{savingProfile ? 'Сохраняем…' : 'Сохранить профиль'}</button>
+          </fieldset>
+        </form>
+        {profileData?.calculation && <div className="profile-result">
+          <h3>Расчёт по сохранённой анкете</h3>
+          <p>Расход в покое: {profileData.calculation.resting_kcal} ккал.</p>
+          <p>Поддержание веса: {profileData.calculation.maintenance_kcal} ккал.</p>
+          <p><strong>Дневная цель: {profileData.calculation.target_kcal} ккал.</strong></p>
+          {profileData.calculation.minimum_applied && <p>Применён нижний порог приложения.
+            Он не заменяет индивидуальную оценку питания.</p>}
+        </div>}
+        <p className="hint">Формула Миффлина — Сан Жеора. В этой учебной версии цель
+          «похудеть» уменьшает расчёт на 10%, «набрать» увеличивает на 10%.
+          Изменения анкеты применяются только после сохранения.</p>
+      </section>}
 
       {tab === 'Продукты' && <>
         <section>

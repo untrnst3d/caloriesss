@@ -16,3 +16,12 @@ button.active, button[type=submit] { background: #dcebd6; }
 .row button { flex: none; }
 .message { padding: 10px; background: #fff4ce; border-radius: 6px; }
 @media (max-width: 550px) { main { padding: 10px; } .row { align-items: flex-start; } }
+
+fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 12px; min-width: 0; }
+button:disabled { opacity: .6; cursor: wait; }
+.daily-goal { margin: 14px 0; padding: 14px; background: #f2f7ee; border-radius: 8px; }
+.daily-goal h3 { margin-top: 0; }
+progress { display: block; width: 100%; height: 20px; accent-color: #668959; }
+.hint { color: #555; font-size: 14px; }
+.profile-result { margin-top: 20px; }
+nav { flex-wrap: wrap; }
