@@ -1,13 +1,16 @@
-import sqlite3
+from account import router as account_router
 from datetime import date
-from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
+from database import query, init_db
+from security import router, current_user, protect_requests
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="NutriDay")
-DB = Path(__file__).with_name("nutriday.sqlite3")
+app.include_router(router)
+app.include_router(account_router)
+app.middleware("http")(protect_requests)
 
 
 class Product(BaseModel):
@@ -38,7 +41,7 @@ class Activity(BaseModel):
     kcal: float = Field(gt=0, le=10000)
 
 
-
+                                                               
 ACTIVITY_FACTORS = {"low": 1.2, "light": 1.375, "moderate": 1.55, "high": 1.725}
 GOAL_FACTORS = {"lose": 0.9, "maintain": 1.0, "gain": 1.1}
 
@@ -57,7 +60,7 @@ def calculate_goal(profile: Profile):
     resting = 10 * profile.weight + 6.25 * profile.height - 5 * profile.age + offset
     maintenance = resting * ACTIVITY_FACTORS[profile.activity]
     target = maintenance * GOAL_FACTORS[profile.goal]
-    
+                                                                                    
     minimum = 1500 if profile.sex == "male" else 1200
     return {
         "resting_kcal": round(resting),
@@ -67,109 +70,41 @@ def calculate_goal(profile: Profile):
     }
 
 
-def query(sql, values=()):
-    with sqlite3.connect(DB) as db:
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA foreign_keys = ON")
-        result = db.execute(sql, values)
-        return [dict(row) for row in result.fetchall()] if result.description else []
-
-
-def init_db():
-    with sqlite3.connect(DB) as db:
-        db.execute("PRAGMA foreign_keys = ON")
-        db.executescript("""
-            CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY, name TEXT NOT NULL,
-                kcal REAL NOT NULL, protein REAL NOT NULL,
-                fat REAL NOT NULL, carbs REAL NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS portions (
-                id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL,
-                name TEXT NOT NULL, grams REAL NOT NULL,
-                FOREIGN KEY (product_id) REFERENCES products(id)
-            );
-            CREATE TABLE IF NOT EXISTS diary (
-                id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL,
-                day TEXT NOT NULL, meal TEXT NOT NULL,
-                grams REAL NOT NULL, portion_name TEXT NOT NULL,
-                FOREIGN KEY (product_id) REFERENCES products(id)
-            );
-            CREATE INDEX IF NOT EXISTS diary_day ON diary(day);
-            CREATE TABLE IF NOT EXISTS activities (
-                id INTEGER PRIMARY KEY, day TEXT NOT NULL,
-                name TEXT NOT NULL, kcal REAL NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS activities_day ON activities(day);
-            CREATE TABLE IF NOT EXISTS profile (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                sex TEXT NOT NULL, age INTEGER NOT NULL,
-                height REAL NOT NULL, weight REAL NOT NULL,
-                activity TEXT NOT NULL, goal TEXT NOT NULL
-            );
-        """)
-        if db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0:
-            products = [
-                ("Яблоко", 52, 0.3, 0.2, 14),
-                ("Банан", 89, 1.1, 0.3, 23),
-                ("Молоко 2,5%", 52, 3, 2.5, 4.7),
-                ("Яйцо куриное", 157, 12.7, 11.5, 0.7),
-                ("Гречка сухая", 343, 13, 3.4, 72),
-                ("Рис сухой", 344, 7, 0.6, 78),
-                ("Куриная грудка", 113, 23, 1.9, 0),
-                ("Огурец", 15, 0.8, 0.1, 2.8),
-                ("Помидор", 20, 1.1, 0.2, 3.7),
-                ("Творог 5%", 121, 17, 5, 1.8),
-                ("Овсяные хлопья сухие", 366, 11.9, 7.2, 69),
-                ("Хлеб пшеничный", 265, 8, 3.2, 49),
-                ("Картофель", 77, 2, 0.4, 16.3),
-                ("Говядина", 187, 18.9, 12.4, 0),
-                ("Лосось", 208, 20, 13, 0),
-                ("Морковь", 41, 0.9, 0.2, 10),
-                ("Сыр твёрдый", 350, 25, 27, 2),
-                ("Кефир 2,5%", 53, 2.9, 2.5, 4),
-            ]
-            db.executemany(
-                "INSERT INTO products (name, kcal, protein, fat, carbs) VALUES (?, ?, ?, ?, ?)",
-                products,
-            )
-
-
 init_db()
 
 
 @app.get("/api/products")
-def get_products():
-    return query("SELECT * FROM products ORDER BY name")
+def get_products(user=Depends(current_user)):
+    return query("SELECT * FROM products WHERE is_builtin = 1 OR user_id = ? ORDER BY name", (user["id"],))
 
 
 @app.post("/api/products", status_code=201)
-def add_product(product: Product):
+def add_product(product: Product, user=Depends(current_user)):
     item = query(
-        "INSERT INTO products (name, kcal, protein, fat, carbs) VALUES (?, ?, ?, ?, ?) RETURNING *",
-        (product.name.strip(), product.kcal, product.protein, product.fat, product.carbs),
+        "INSERT INTO products (name, kcal, protein, fat, carbs, user_id) VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+        (product.name.strip(), product.kcal, product.protein, product.fat, product.carbs, user["id"]),
     )
     return item[0]
 
 
 @app.get("/api/portions")
-def get_portions(product_id: int):
-    return query("SELECT * FROM portions WHERE product_id = ? ORDER BY id", (product_id,))
+def get_portions(product_id: int, user=Depends(current_user)):
+    return query("SELECT * FROM portions WHERE product_id = ? AND user_id = ? ORDER BY id", (product_id, user["id"]))
 
 
 @app.post("/api/portions", status_code=201)
-def add_portion(portion: Portion):
-    if not query("SELECT id FROM products WHERE id = ?", (portion.product_id,)):
+def add_portion(portion: Portion, user=Depends(current_user)):
+    if not query("SELECT id FROM products WHERE id = ? AND (is_builtin = 1 OR user_id = ?)", (portion.product_id, user["id"])):
         raise HTTPException(404, "Продукт не найден")
     item = query(
-        "INSERT INTO portions (product_id, name, grams) VALUES (?, ?, ?) RETURNING *",
-        (portion.product_id, portion.name.strip(), portion.grams),
+        "INSERT INTO portions (product_id, name, grams, user_id) VALUES (?, ?, ?, ?) RETURNING *",
+        (portion.product_id, portion.name.strip(), portion.grams, user["id"]),
     )
     return item[0]
 
 
 @app.get("/api/diary")
-def get_diary(day: date):
+def get_diary(day: date, user=Depends(current_user)):
     rows = query("""
         SELECT diary.*, products.name AS product_name,
                ROUND(products.kcal * diary.grams / 100, 1) AS kcal,
@@ -177,59 +112,59 @@ def get_diary(day: date):
                ROUND(products.fat * diary.grams / 100, 1) AS fat,
                ROUND(products.carbs * diary.grams / 100, 1) AS carbs
         FROM diary JOIN products ON products.id = diary.product_id
-        WHERE diary.day = ? ORDER BY diary.id
-    """, (day.isoformat(),))
+        WHERE diary.day = ? AND diary.user_id = ? ORDER BY diary.id
+    """, (day.isoformat(), user["id"]))
     total = {key: round(sum(row[key] for row in rows), 1)
              for key in ("kcal", "protein", "fat", "carbs")}
     return {"entries": rows, "total": total}
 
 
 @app.post("/api/diary", status_code=201)
-def add_diary(entry: DiaryEntry):
-    if not query("SELECT id FROM products WHERE id = ?", (entry.product_id,)):
+def add_diary(entry: DiaryEntry, user=Depends(current_user)):
+    if not query("SELECT id FROM products WHERE id = ? AND (is_builtin = 1 OR user_id = ?)", (entry.product_id, user["id"])):
         raise HTTPException(404, "Продукт не найден")
     query(
-        "INSERT INTO diary (product_id, day, meal, grams, portion_name) VALUES (?, ?, ?, ?, ?)",
-        (entry.product_id, entry.day.isoformat(), entry.meal, entry.grams, entry.portion_name),
+        "INSERT INTO diary (product_id, day, meal, grams, portion_name, user_id) VALUES (?, ?, ?, ?, ?, ?)",
+        (entry.product_id, entry.day.isoformat(), entry.meal, entry.grams, entry.portion_name, user["id"]),
     )
-    return get_diary(entry.day)
+    return get_diary(entry.day, user)
 
 
 @app.delete("/api/diary/{entry_id}")
-def delete_diary(entry_id: int):
-    if not query("SELECT id FROM diary WHERE id = ?", (entry_id,)):
+def delete_diary(entry_id: int, user=Depends(current_user)):
+    if not query("SELECT id FROM diary WHERE id = ? AND user_id = ?", (entry_id, user["id"])):
         raise HTTPException(404, "Запись не найдена")
-    query("DELETE FROM diary WHERE id = ?", (entry_id,))
+    query("DELETE FROM diary WHERE id = ? AND user_id = ?", (entry_id, user["id"]))
     return {"ok": True}
 
 
 @app.get("/api/activities")
-def get_activities(day: date):
-    entries = query("SELECT * FROM activities WHERE day = ? ORDER BY id", (day.isoformat(),))
+def get_activities(day: date, user=Depends(current_user)):
+    entries = query("SELECT * FROM activities WHERE day = ? AND user_id = ? ORDER BY id", (day.isoformat(), user["id"]))
     return {"entries": entries, "total": round(sum(item["kcal"] for item in entries), 1)}
 
 
 @app.post("/api/activities", status_code=201)
-def add_activity(activity: Activity):
+def add_activity(activity: Activity, user=Depends(current_user)):
     if not activity.name.strip():
         raise HTTPException(422, "Введи название активности")
     return query(
-        "INSERT INTO activities (day, name, kcal) VALUES (?, ?, ?) RETURNING *",
-        (activity.day.isoformat(), activity.name.strip(), activity.kcal),
+        "INSERT INTO activities (day, name, kcal, user_id) VALUES (?, ?, ?, ?) RETURNING *",
+        (activity.day.isoformat(), activity.name.strip(), activity.kcal, user["id"]),
     )[0]
 
 
 @app.delete("/api/activities/{activity_id}")
-def delete_activity(activity_id: int):
-    if not query("SELECT id FROM activities WHERE id = ?", (activity_id,)):
+def delete_activity(activity_id: int, user=Depends(current_user)):
+    if not query("SELECT id FROM activities WHERE id = ? AND user_id = ?", (activity_id, user["id"])):
         raise HTTPException(404, "Активность не найдена")
-    query("DELETE FROM activities WHERE id = ?", (activity_id,))
+    query("DELETE FROM activities WHERE id = ? AND user_id = ?", (activity_id, user["id"]))
     return {"ok": True}
 
 
 @app.get("/api/profile")
-def get_profile():
-    rows = query("SELECT sex, age, height, weight, activity, goal FROM profile WHERE id = 1")
+def get_profile(user=Depends(current_user)):
+    rows = query("SELECT sex, age, height, weight, activity, goal FROM profile WHERE user_id = ?", (user["id"],))
     if not rows:
         return {"profile": None, "calculation": None}
     profile = Profile(**rows[0])
@@ -237,12 +172,12 @@ def get_profile():
 
 
 @app.put("/api/profile")
-def save_profile(profile: Profile):
+def save_profile(profile: Profile, user=Depends(current_user)):
     query("""
-        INSERT INTO profile (id, sex, age, height, weight, activity, goal)
-        VALUES (1, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
+        INSERT INTO profile (user_id, sex, age, height, weight, activity, goal)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
             sex = excluded.sex, age = excluded.age, height = excluded.height,
             weight = excluded.weight, activity = excluded.activity, goal = excluded.goal
-    """, (profile.sex, profile.age, profile.height, profile.weight, profile.activity, profile.goal))
+    """, (user["id"], profile.sex, profile.age, profile.height, profile.weight, profile.activity, profile.goal))
     return {"profile": profile.model_dump(), "calculation": calculate_goal(profile)}
