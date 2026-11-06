@@ -1,391 +1,915 @@
-import React, { useEffect, useState } from 'react';
-import { createRoot } from 'react-dom/client';
-import './style.css';
-import { getDayProgress } from './dailyGoal.js';
-
-const today = new Date().toLocaleDateString('en-CA');
-const emptyProduct = { name: '', kcal: '', protein: '', fat: '', carbs: '' };
-const emptyProfile = { sex: 'female', age: '', height: '', weight: '', activity: 'low', goal: 'maintain' };
-const activityLabels = { low: 'Низкая — в основном сидя', light: 'Лёгкая — немного движения',
-  moderate: 'Средняя — регулярные нагрузки', high: 'Высокая — интенсивные нагрузки' };
-const goalLabels = { lose: 'Похудеть', maintain: 'Сохранить вес', gain: 'Набрать вес' };
-const meals = ['Завтрак', 'Обед', 'Ужин', 'Перекус'];
-
-async function api(path, method = 'GET', data) {
-  const response = await fetch('/api' + path, {
-    method,
-    headers: data ? { 'Content-Type': 'application/json' } : {},
-    body: data ? JSON.stringify(data) : undefined,
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const message = typeof body.detail === 'string' ? body.detail
-      : response.status === 422 ? 'Проверь заполнение полей и допустимые значения'
-      : 'Не удалось сохранить или загрузить данные';
-    throw new Error(message);
-  }
-  return response.json();
+import React, { useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  Leaf,
+  LayoutDashboard,
+  ScanBarcode,
+  Apple,
+  UserRound,
+  Plus,
+  ArrowUpRight,
+  Footprints,
+  Trash2,
+  Search,
+  Sun,
+  ChevronRight,
+} from "lucide-react";
+import AuthGate from "./Auth.jsx";
+import Profile, { Avatar } from "./Profile.jsx";
+import Barcode from "./Barcode.jsx";
+import { api } from "./client.js";
+import { getDayProgress } from "./dailyGoal.js";
+import "./style.css";
+const tabs = [
+  ["Дневник", LayoutDashboard],
+  ["Сканер", ScanBarcode],
+  ["Продукты", Apple],
+  ["Профиль", UserRound],
+];
+const meals = ["Завтрак", "Обед", "Ужин", "Перекус"];
+const blankProduct = { name: "", kcal: "", protein: "", fat: "", carbs: "" };
+function localDay() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
-
-function App() {
-  const [tab, setTab] = useState('Дневник');
-  const [products, setProducts] = useState([]);
-  const [productId, setProductId] = useState('');
-  const [grams, setGrams] = useState(100);
-  const [meal, setMeal] = useState('Завтрак');
-  const [day, setDay] = useState(today);
-  const [diary, setDiary] = useState({ entries: [], total: {} });
-  const [activities, setActivities] = useState({ entries: [], total: 0 });
-  const [activityName, setActivityName] = useState('');
-  const [burnedKcal, setBurnedKcal] = useState('');
-  const [portions, setPortions] = useState([]);
-  const [portionId, setPortionId] = useState('');
-  const [portionName, setPortionName] = useState('');
-  const [portionGrams, setPortionGrams] = useState(100);
-  const [newProduct, setNewProduct] = useState(emptyProduct);
-  const [search, setSearch] = useState('');
-  const [message, setMessage] = useState('');
-  const [profileForm, setProfileForm] = useState(emptyProfile);
-  const [profileData, setProfileData] = useState(null);
-  const [profileStatus, setProfileStatus] = useState('loading');
-  const [profileRequest, setProfileRequest] = useState(0);
-  const [savingProfile, setSavingProfile] = useState(false);
-
+function App({ user, logout, logoutBusy }) {
+  const [tab, setTab] = useState("Дневник"),
+    [account, setAccount] = useState(null),
+    [profile, setProfile] = useState(null),
+    [ready, setReady] = useState(false),
+    [loadError, setLoadError] = useState("");
+  const [products, setProducts] = useState([]),
+    [day, setDay] = useState(localDay),
+    [diary, setDiary] = useState({ entries: [], total: {} }),
+    [activities, setActivities] = useState({ entries: [], total: 0 });
+  const [productId, setProductId] = useState(""),
+    [grams, setGrams] = useState(100),
+    [meal, setMeal] = useState("Завтрак"),
+    [search, setSearch] = useState("");
+  const [portions, setPortions] = useState([]),
+    [portionId, setPortionId] = useState(""),
+    [portionName, setPortionName] = useState(""),
+    [portionGrams, setPortionGrams] = useState(100);
+  const [newProduct, setNewProduct] = useState(blankProduct),
+    [activityName, setActivityName] = useState(""),
+    [burned, setBurned] = useState(""),
+    [message, setMessage] = useState(""),
+    [error, setError] = useState(""),
+    [busy, setBusy] = useState(false),
+    [refresh, setRefresh] = useState(0),
+    [dayReady, setDayReady] = useState(false);
   useEffect(() => {
-    let cancelled = false;
-    setProfileStatus('loading');
-    api('/profile').then(data => {
-      if (cancelled) return;
-      setProfileData(data);
-      setProfileForm(data.profile || emptyProfile);
-      setProfileStatus('ready');
-    }).catch(() => {
-      if (!cancelled) setProfileStatus('error');
-    });
-    return () => { cancelled = true; };
-  }, [profileRequest]);
-
-  function changeProfile(event) {
-    const { name, value } = event.target;
-    setProfileForm(current => ({ ...current, [name]: value }));
-  }
-
-  async function saveProfile(event) {
-    event.preventDefault();
-    if (profileStatus !== 'ready' || savingProfile) return;
-    setSavingProfile(true);
-    setMessage('');
-    try {
-      const saved = await api('/profile', 'PUT', {
-        ...profileForm, age: Number(profileForm.age),
-        height: Number(profileForm.height), weight: Number(profileForm.weight),
+    let live = true;
+    setLoadError("");
+    Promise.all([api("/account"), api("/profile"), api("/products")])
+      .then(([a, p, foods]) => {
+        if (live) {
+          setAccount(a);
+          setProfile(p);
+          setProducts(foods);
+          setReady(true);
+        }
+      })
+      .catch((e) => {
+        if (live) setLoadError(e.message);
       });
-      setProfileData(saved);
-      setProfileForm(saved.profile);
-      setMessage('Профиль сохранён. Дневная цель пересчитана');
-    } catch (error) { setMessage(error.message); }
-    finally { setSavingProfile(false); }
-  }
-
+    return () => {
+      live = false;
+    };
+  }, [refresh]);
   useEffect(() => {
-    api('/products').then(setProducts).catch(error => setMessage(error.message));
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
+    let live = true;
+    setDayReady(false);
     setDiary({ entries: [], total: {} });
     setActivities({ entries: [], total: 0 });
     if (!day) return;
-    api('/diary?day=' + day).then(data => {
-      if (!cancelled) setDiary(data);
-    }).catch(error => { if (!cancelled) setMessage(error.message); });
-    api('/activities?day=' + day).then(data => {
-      if (!cancelled) setActivities(data);
-    }).catch(error => { if (!cancelled) setMessage(error.message); });
-    return () => { cancelled = true; };
-  }, [day]);
-
+    Promise.all([api("/diary?day=" + day), api("/activities?day=" + day)])
+      .then(([d, a]) => {
+        if (live) {
+          setDiary(d);
+          setActivities(a);
+          setDayReady(true);
+        }
+      })
+      .catch((e) => {
+        if (live) setError(e.message);
+      });
+    return () => {
+      live = false;
+    };
+  }, [day, refresh]);
   useEffect(() => {
-    if (!productId) return;
-    api('/portions?product_id=' + productId)
-      .then(setPortions).catch(error => setMessage(error.message));
-    setPortionId('');
+    let live = true;
+    setPortions([]);
+    setPortionId("");
     setGrams(100);
+    if (productId)
+      api("/portions?product_id=" + productId)
+        .then((p) => {
+          if (live) setPortions(p);
+        })
+        .catch((e) => {
+          if (live) setError(e.message);
+        });
+    return () => {
+      live = false;
+    };
   }, [productId]);
-
-  const progress = getDayProgress(profileData?.calculation?.target_kcal, diary.total.kcal || 0);
-  const product = products.find(item => item.id === Number(productId));
-  const shownProducts = products.filter(item =>
-    item.name.toLowerCase().includes(search.toLowerCase())
+  async function act(job, success) {
+    if (busy) return;
+    setBusy(true);
+    setMessage("");
+    setError("");
+    try {
+      await job();
+      setMessage(success);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  function navigate(value) {
+    setTab(value);
+    setError("");
+    setMessage("");
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }
+  function imported(product) {
+    setProducts((current) =>
+      [...current.filter((p) => p.id !== product.id), product].sort((a, b) =>
+        a.name.localeCompare(b.name),
+      ),
+    );
+    setProductId(String(product.id));
+    navigate("Дневник");
+    setMessage("Продукт выбран. Укажи количество и добавь в дневник");
+    setTimeout(
+      () =>
+        document
+          .getElementById("meal-form")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      60,
+    );
+  }
+  const selected = products.find((p) => p.id === Number(productId));
+  const progress = getDayProgress(
+    profile?.calculation?.target_kcal,
+    diary.total.kcal || 0,
   );
-  const nutrients = product && ['kcal', 'protein', 'fat', 'carbs'].map(key =>
-    Math.round(product[key] * Number(grams || 0) / 100 * 10) / 10
-  );
-
-  async function addProduct(event) {
-    event.preventDefault();
-    try {
-      const saved = await api('/products', 'POST', {
-        name: newProduct.name,
-        kcal: Number(newProduct.kcal), protein: Number(newProduct.protein),
-        fat: Number(newProduct.fat), carbs: Number(newProduct.carbs),
-      });
-      setProducts([...products, saved].sort((a, b) => a.name.localeCompare(b.name)));
-      setProductId(String(saved.id));
-      setNewProduct(emptyProduct);
-      setMessage('Продукт сохранён');
-    } catch (error) { setMessage(error.message); }
-  }
-
-  async function addPortion(event) {
-    event.preventDefault();
-    if (!productId) return setMessage('Сначала выбери продукт');
-    try {
-      const saved = await api('/portions', 'POST', {
-        product_id: Number(productId), name: portionName, grams: Number(portionGrams),
-      });
-      setPortions([...portions, saved]);
-      setPortionId(String(saved.id));
-      setGrams(saved.grams);
-      setPortionName('');
-      setMessage('Порция сохранена');
-    } catch (error) { setMessage(error.message); }
-  }
-
-  async function addEntry(event) {
-    event.preventDefault();
-    if (!productId) return setMessage('Сначала выбери продукт');
-    try {
-      const selected = portions.find(item => item.id === Number(portionId));
-      const saved = await api('/diary', 'POST', {
-        product_id: Number(productId), day, meal, grams: Number(grams),
-        portion_name: selected ? selected.name : '',
-      });
-      setDiary(saved);
-      setMessage('Добавлено в дневник');
-    } catch (error) { setMessage(error.message); }
-  }
-
-  async function removeEntry(id) {
-    try {
-      await api('/diary/' + id, 'DELETE');
-      setDiary(await api('/diary?day=' + day));
-      setMessage('Запись удалена');
-    } catch (error) { setMessage(error.message); }
-  }
-
-  async function addActivity(event) {
-    event.preventDefault();
-    if (!activityName.trim()) return setMessage('Введи название активности');
-    try {
-      await api('/activities', 'POST', {
-        day, name: activityName.trim(), kcal: Number(burnedKcal),
-      });
-      setActivities(await api('/activities?day=' + day));
-      setActivityName('');
-      setBurnedKcal('');
-      setMessage('Активность добавлена');
-    } catch (error) { setMessage(error.message); }
-  }
-
-  async function removeActivity(id) {
-    try {
-      await api('/activities/' + id, 'DELETE');
-      setActivities(await api('/activities?day=' + day));
-      setMessage('Активность удалена');
-    } catch (error) { setMessage(error.message); }
-  }
-
+  const prettyDate = day
+    ? new Date(day + "T12:00:00").toLocaleDateString("ru-RU", {
+        day: "numeric",
+        month: "long",
+        weekday: "long",
+      })
+    : "Выбери дату";
+  if (loadError && !ready)
+    return (
+      <div className="loading-screen">
+        <h2>Не удалось открыть дневник</h2>
+        <p>{loadError}</p>
+        <button onClick={() => setRefresh((x) => x + 1)}>Повторить</button>
+      </div>
+    );
+  if (!ready)
+    return (
+      <div className="loading-screen">
+        <Leaf />
+        <p>Загружаем твой дневник…</p>
+      </div>
+    );
   return (
-    <main>
-      <header>
-        <h1>NutriDay</h1>
-        <p>Учёт питания</p>
-      </header>
-      <nav>
-        {['Дневник', 'Продукты', 'Профиль'].map(name =>
-          <button key={name} className={tab === name ? 'active' : ''}
-            onClick={() => { setTab(name); setMessage(''); }}>{name}</button>
-        )}
-      </nav>
-      {message && <p className="message" role="alert">{message}</p>}
-
-      {tab === 'Дневник' && <>
-        <section>
-          <h2>Дневник за день</h2>
-          <label>Дата <input type="date" required value={day}
-            onChange={event => setDay(event.target.value)} /></label>
-          <div className="daily-goal">
-            <h3>Дневная цель</h3>
-            {profileStatus === 'loading' && <p>Загружаем профиль…</p>}
-            {profileStatus === 'error' && <p>Не удалось загрузить профиль. <button
-              onClick={() => setProfileRequest(value => value + 1)}>Повторить загрузку</button></p>}
-            {profileStatus === 'ready' && (progress ? <>
-              <p>Цель: {progress.target} ккал · Съедено: {progress.eaten} ккал</p>
-              <p>{progress.remaining >= 0 ? `Осталось: ${progress.remaining}`
-                : `Выше цели на: ${Math.abs(progress.remaining)}`} ккал</p>
-              <progress aria-label="Доля дневной цели" max="100" value={progress.percent} />
-              <p className="hint">Текущая цель профиля применяется ко всем выбранным датам.
-                Тренировки не увеличивают её автоматически.</p>
-            </> : <p>Заполни анкету, чтобы увидеть дневную цель. <button
-              onClick={() => setTab('Профиль')}>Заполнить профиль</button></p>)}
+    <div className="app-shell">
+      <aside className="sidebar">
+        <a href="/" className="brand">
+          <span className="brand-icon">
+            <Leaf />
+          </span>
+          NutriDay<span className="brand-dot">.</span>
+        </a>
+        <p className="nav-label">ТВОЙ КАЖДЫЙ ДЕНЬ</p>
+        <nav aria-label="Главная навигация">
+          {tabs.map(([name, Icon]) => (
+            <button
+              key={name}
+              className={name === tab ? "active" : ""}
+              aria-current={name === tab ? "page" : undefined}
+              onClick={() => navigate(name)}
+            >
+              <Icon size={21} />
+              <span>{name}</span>
+              {name === tab && <span className="nav-dot" />}
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-note">
+          <Sun />
+          <h3>В своём темпе</h3>
+          <p>
+            Маленькие привычки
+            <br />
+            складываются в заботу.
+          </p>
+        </div>
+        <button className="sidebar-account" onClick={() => navigate("Профиль")}>
+          <Avatar account={account} />
+          <span>
+            <strong>{account.display_name || user.username}</strong>
+            <small>Мой профиль</small>
+          </span>
+          <ChevronRight size={18} />
+        </button>
+      </aside>
+      <main className="main-content">
+        <header className="topbar">
+          <span className="breadcrumb">
+            Моё пространство <span>/</span> {tab}
+          </span>
+          <button className="mobile-brand" onClick={() => navigate("Дневник")}>
+            <Leaf size={20} />
+            NutriDay
+          </button>
+          <button
+            className="account-chip"
+            aria-label="Открыть профиль"
+            onClick={() => navigate("Профиль")}
+          >
+            <span>{account.display_name || user.username}</span>
+            <Avatar account={account} />
+          </button>
+        </header>
+        <div className="page-heading">
+          <div>
+            <span className="eyebrow">
+              {tab === "Дневник"
+                ? "ТВОЙ ДЕНЬ, ТВОЙ БАЛАНС"
+                : "NUTRIDAY / " + tab.toUpperCase()}
+            </span>
+            <h1>
+              {tab === "Дневник"
+                ? `Привет, ${account.display_name || user.username}`
+                : tab === "Сканер"
+                  ? "Продукт за пару секунд"
+                  : tab === "Продукты"
+                    ? "Твой каталог"
+                    : "Всё начинается с тебя"}
+              <span className="heading-dot">.</span>
+            </h1>
+            <p className="muted">
+              {tab === "Дневник"
+                ? "Пусть сегодня будет чуть больше заботы о себе."
+                : tab === "Продукты"
+                  ? "Любимые продукты и привычные порции — в одном месте."
+                  : tab === "Профиль"
+                    ? "Твои данные, твои цели, твой ритм."
+                    : "Меньше ручного ввода. Больше времени на жизнь."}
+            </p>
           </div>
-          <p>Всего: {diary.total.kcal || 0} ккал · Б {diary.total.protein || 0} г ·
-            Ж {diary.total.fat || 0} г · У {diary.total.carbs || 0} г</p>
-          <p>Активность за день: {activities.total} ккал (учитывается отдельно).</p>
-          {diary.entries.length === 0 && <p>За этот день пока нет записей.</p>}
-          {meals.map(name => {
-            const entries = diary.entries.filter(item => item.meal === name);
-            return entries.length > 0 && <div key={name}>
-              <h3>{name}</h3>
-              {entries.map(item => <div className="row" key={item.id}>
-                <span>{item.product_name} · {item.portion_name || item.grams + ' г'}
-                  {item.portion_name && ' (' + item.grams + ' г)'} · {item.kcal} ккал</span>
-                <button onClick={() => removeEntry(item.id)}>Удалить</button>
-              </div>)}
-            </div>;
-          })}
-        </section>
-        <section>
-          <h2>Физическая активность</h2>
-          <p>Записи за {day}. Введи название и калории с трекера вручную.</p>
-          {activities.entries.length === 0 && <p>За этот день активностей пока нет.</p>}
-          {activities.entries.map(item => <div className="row" key={item.id}>
-            <span>{item.name} · {item.kcal} ккал</span>
-            <button onClick={() => removeActivity(item.id)}>Удалить</button>
-          </div>)}
-          <form onSubmit={addActivity}>
-            <label>Активность <input required maxLength="80" value={activityName}
-              onChange={event => setActivityName(event.target.value)}
-              placeholder="Например, прогулка" /></label>
-            <label>Сожжено ккал <input required type="number" min="0.1" max="10000"
-              step="0.1" value={burnedKcal}
-              onChange={event => setBurnedKcal(event.target.value)} /></label>
-            <button type="submit" disabled={!day}>Добавить активность</button>
-          </form>
-        </section>
-        <section>
-          <h2>Добавить приём пищи</h2>
-          <form onSubmit={addEntry}>
-            <label>Приём пищи <select value={meal}
-              onChange={event => setMeal(event.target.value)}>
-              {meals.map(name => <option key={name}>{name}</option>)}
-            </select></label>
-            <label>Продукт <select value={productId} required
-              onChange={event => setProductId(event.target.value)}>
-              <option value="">Выбери продукт</option>
-              {products.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select></label>
-            {product && <>
-              <label>Порция <select value={portionId} onChange={event => {
-                const id = event.target.value;
-                setPortionId(id);
-                const found = portions.find(item => item.id === Number(id));
-                if (found) setGrams(found.grams);
-              }}>
-                <option value="">Ввести граммы вручную</option>
-                {portions.map(item => <option key={item.id} value={item.id}>
-                  {item.name} · {item.grams} г
-                </option>)}
-              </select></label>
-              <label>Граммы <input type="number" min="1" max="5000" step="0.1"
-                required value={grams} onChange={event => {
-                  setGrams(event.target.value);
-                  setPortionId('');
-                }} /></label>
-              <p>Для порции: {nutrients[0]} ккал · Б {nutrients[1]} г ·
-                Ж {nutrients[2]} г · У {nutrients[3]} г</p>
-            </>}
-            <button type="submit">Добавить в дневник</button>
-          </form>
-        </section>
-      </>}
-
-      {tab === 'Профиль' && <section>
-        <h2>Мой профиль</h2>
-        <p>Ориентировочный расчёт для взрослых 19–78 лет. При заболеваниях,
-          беременности или кормлении цель питания нужно согласовать со специалистом.</p>
-        {profileStatus === 'loading' && <p>Загружаем профиль…</p>}
-        {profileStatus === 'error' && <p>Не удалось загрузить профиль. <button
-          onClick={() => setProfileRequest(value => value + 1)}>Повторить загрузку</button></p>}
-        <form onSubmit={saveProfile}>
-          <fieldset disabled={profileStatus !== 'ready' || savingProfile}>
-            <label>Пол для расчёта <select name="sex" value={profileForm.sex} onChange={changeProfile}>
-              <option value="female">Женский</option><option value="male">Мужской</option>
-            </select></label>
-            <label>Возраст, лет <input name="age" type="number" min="19" max="78"
-              step="1" required value={profileForm.age} onChange={changeProfile} /></label>
-            <label>Рост, см <input name="height" type="number" min="120" max="230"
-              step="0.1" required value={profileForm.height} onChange={changeProfile} /></label>
-            <label>Вес, кг <input name="weight" type="number" min="35" max="250"
-              step="0.1" required value={profileForm.weight} onChange={changeProfile} /></label>
-            <label>Уровень активности <select name="activity" value={profileForm.activity} onChange={changeProfile}>
-              {Object.entries(activityLabels).map(([value, label]) =>
-                <option key={value} value={value}>{label}</option>)}
-            </select></label>
-            <label>Цель <select name="goal" value={profileForm.goal} onChange={changeProfile}>
-              {Object.entries(goalLabels).map(([value, label]) =>
-                <option key={value} value={value}>{label}</option>)}
-            </select></label>
-            <button type="submit">{savingProfile ? 'Сохраняем…' : 'Сохранить профиль'}</button>
-          </fieldset>
-        </form>
-        {profileData?.calculation && <div className="profile-result">
-          <h3>Расчёт по сохранённой анкете</h3>
-          <p>Расход в покое: {profileData.calculation.resting_kcal} ккал.</p>
-          <p>Поддержание веса: {profileData.calculation.maintenance_kcal} ккал.</p>
-          <p><strong>Дневная цель: {profileData.calculation.target_kcal} ккал.</strong></p>
-          {profileData.calculation.minimum_applied && <p>Применён нижний порог приложения.
-            Он не заменяет индивидуальную оценку питания.</p>}
-        </div>}
-        <p className="hint">Формула Миффлина — Сан Жеора. В этой учебной версии цель
-          «похудеть» уменьшает расчёт на 10%, «набрать» увеличивает на 10%.
-          Изменения анкеты применяются только после сохранения.</p>
-      </section>}
-
-      {tab === 'Продукты' && <>
-        <section>
-          <h2>Каталог</h2>
-          <p>Калории и БЖУ указаны на 100 г. Значения примерные.</p>
-          <input placeholder="Поиск продукта" value={search}
-            onChange={event => setSearch(event.target.value)} />
-          {shownProducts.map(item => <div className="row" key={item.id}>
-            <span>{item.name} · {item.kcal} ккал · Б {item.protein} ·
-              Ж {item.fat} · У {item.carbs}</span>
-            <button onClick={() => { setProductId(String(item.id)); setTab('Дневник'); }}>
-              Выбрать</button>
-          </div>)}
-        </section>
-        <section>
-          <h2>Свой продукт</h2>
-          <form onSubmit={addProduct}>
-            {Object.keys(emptyProduct).map(key => <label key={key}>
-              {{ name: 'Название', kcal: 'Ккал', protein: 'Белки', fat: 'Жиры', carbs: 'Углеводы' }[key]}
-              <input required type={key === 'name' ? 'text' : 'number'}
-                min={key === 'name' ? undefined : 0} step={key === 'name' ? undefined : '0.1'}
-                value={newProduct[key]} onChange={event => setNewProduct({
-                  ...newProduct, [key]: event.target.value,
-                })} />
-            </label>)}
-            <button type="submit">Сохранить продукт</button>
-          </form>
-        </section>
-        <section>
-          <h2>Своя порция</h2>
-          <p>Например: «Моя кружка» — 250 г. Выбери продукт в дневнике.</p>
-          <form onSubmit={addPortion}>
-            <p>Продукт: {product?.name || 'не выбран'}</p>
-            <label>Название порции <input required value={portionName}
-              onChange={event => setPortionName(event.target.value)} /></label>
-            <label>Вес в граммах <input type="number" min="1" max="5000"
-              step="0.1" required value={portionGrams}
-              onChange={event => setPortionGrams(event.target.value)} /></label>
-            <button type="submit">Сохранить порцию</button>
-          </form>
-        </section>
-      </>}
-    </main>
+          {tab === "Дневник" && (
+            <label className="date-control">
+              Дата
+              <input
+                aria-label="Дата дневника"
+                type="date"
+                required
+                value={day}
+                onChange={(e) => setDay(e.target.value)}
+              />
+            </label>
+          )}
+        </div>
+        {(error || loadError) && (
+          <div className="message error" role="alert">
+            {error || loadError}
+            <button
+              className="text-button"
+              onClick={() => {
+                setError("");
+                setRefresh((x) => x + 1);
+              }}
+            >
+              Повторить загрузку
+            </button>
+          </div>
+        )}
+        {message && (
+          <p className="message" role="status">
+            {message}
+          </p>
+        )}
+        {tab === "Сканер" && <Barcode onSaved={imported} />}
+        {tab === "Профиль" && (
+          <Profile
+            account={account}
+            setAccount={setAccount}
+            profile={profile}
+            setProfile={setProfile}
+            logout={logout}
+            logoutBusy={logoutBusy}
+          />
+        )}
+        {tab === "Дневник" && (
+          <>
+            <div className="dashboard-top">
+              <section className="balance-card">
+                <div className="balance-copy">
+                  <span className="eyebrow">БАЛАНС ЗА ДЕНЬ</span>
+                  <h2>
+                    {dayReady
+                      ? progress
+                        ? progress.remaining >= 0
+                          ? "Ещё немного до цели"
+                          : "Сегодня выше цели"
+                        : "Начнём с твоей цели"
+                      : "Загружаем день…"}
+                  </h2>
+                  {progress ? (
+                    <>
+                      <p className="balance-number">
+                        {Math.abs(progress.remaining)}{" "}
+                        <span>
+                          ккал{" "}
+                          {progress.remaining >= 0 ? "осталось" : "сверх цели"}
+                        </span>
+                      </p>
+                      <p>
+                        Цель {progress.target} ккал · Съедено {progress.eaten}{" "}
+                        ккал
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p>
+                        Заполни короткую анкету —<br />
+                        рассчитаем дневную цель.
+                      </p>
+                      <button
+                        className="light-button"
+                        onClick={() => navigate("Профиль")}
+                      >
+                        Заполнить профиль
+                        <ArrowUpRight size={18} />
+                      </button>
+                    </>
+                  )}
+                </div>
+                <div
+                  className="calorie-ring"
+                  role="img"
+                  aria-label={
+                    progress
+                      ? `Съедено ${progress.eaten} из ${progress.target} ккал`
+                      : "Дневная цель не задана"
+                  }
+                >
+                  <svg viewBox="0 0 160 160">
+                    <circle cx="80" cy="80" r="67" className="ring-track" />
+                    <circle
+                      cx="80"
+                      cy="80"
+                      r="67"
+                      className="ring-value"
+                      strokeDasharray={`${(progress?.percent || 0) * 4.21} 421`}
+                    />
+                  </svg>
+                  <div>
+                    <Leaf size={22} />
+                    <strong>
+                      {dayReady ? Math.round(diary.total.kcal || 0) : "—"}
+                    </strong>
+                    <small>ккал съедено</small>
+                  </div>
+                </div>
+              </section>
+              <section className="card nutrients">
+                <span className="eyebrow">НЕ ТОЛЬКО КАЛОРИИ</span>
+                <h2>Твой баланс БЖУ</h2>
+                {[
+                  ["protein", "Белки", "protein"],
+                  ["fat", "Жиры", "fat"],
+                  ["carbs", "Углеводы", "carbs"],
+                ].map(([key, label, cls]) => (
+                  <div className="nutrient" key={key}>
+                    <span className={"nutrient-dot " + cls} />
+                    <span>{label}</span>
+                    <strong>
+                      {dayReady ? diary.total[key] || 0 : "—"} <small>г</small>
+                    </strong>
+                  </div>
+                ))}
+                <p className="field-hint">
+                  Фактически съедено за выбранный день
+                </p>
+              </section>
+            </div>
+            <div className="dashboard-columns">
+              <div>
+                <section className="card">
+                  <div className="section-heading">
+                    <div>
+                      <span className="eyebrow">{prettyDate}</span>
+                      <h2>Дневник питания</h2>
+                    </div>
+                    <span className="count-badge">{diary.entries.length}</span>
+                  </div>
+                  {!dayReady ? (
+                    <p className="muted">
+                      {error
+                        ? "Не удалось загрузить записи"
+                        : "Загружаем записи…"}
+                    </p>
+                  ) : diary.entries.length === 0 ? (
+                    <div className="empty-state">
+                      <span className="empty-icon">
+                        <Apple size={30} />
+                      </span>
+                      <h3>Здесь начинается твой день</h3>
+                      <p>
+                        Добавь первый приём пищи.
+                        <br />
+                        Продукт можно найти по штрихкоду.
+                      </p>
+                      <button
+                        className="secondary"
+                        onClick={() => navigate("Сканер")}
+                      >
+                        <ScanBarcode size={18} />
+                        Найти продукт
+                      </button>
+                    </div>
+                  ) : (
+                    meals.map((name) => {
+                      const rows = diary.entries.filter((r) => r.meal === name);
+                      return (
+                        rows.length > 0 && (
+                          <div className="meal-group" key={name}>
+                            <h3>
+                              {name}
+                              <span>
+                                {Math.round(
+                                  rows.reduce((a, r) => a + r.kcal, 0),
+                                )}{" "}
+                                ккал
+                              </span>
+                            </h3>
+                            {rows.map((item) => (
+                              <div className="food-row" key={item.id}>
+                                <span className="food-symbol">
+                                  <Apple size={21} />
+                                </span>
+                                <div>
+                                  <strong>{item.product_name}</strong>
+                                  <p>
+                                    {item.portion_name &&
+                                      item.portion_name + " · "}
+                                    {item.grams} г / мл · Б {item.protein} · Ж{" "}
+                                    {item.fat} · У {item.carbs}
+                                  </p>
+                                </div>
+                                <span className="row-kcal">
+                                  {item.kcal}
+                                  <small>ккал</small>
+                                </span>
+                                <button
+                                  className="icon-button"
+                                  aria-label={"Удалить " + item.product_name}
+                                  disabled={busy}
+                                  onClick={() =>
+                                    act(async () => {
+                                      await api("/diary/" + item.id, "DELETE");
+                                      setDiary(await api("/diary?day=" + day));
+                                    }, "Запись удалена")
+                                  }
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      );
+                    })
+                  )}
+                </section>
+                <section className="card">
+                  <div className="section-heading">
+                    <div>
+                      <span className="eyebrow">ДВИЖЕНИЕ В РАДОСТЬ</span>
+                      <h2>Активность</h2>
+                    </div>
+                    <Footprints className="muted" />
+                  </div>
+                  <p className="muted">
+                    {activities.total} ккал за день. Учитываются отдельно от
+                    цели.
+                  </p>
+                  {activities.entries.map((a) => (
+                    <div className="activity-row" key={a.id}>
+                      <span>{a.name}</span>
+                      <strong>{a.kcal} ккал</strong>
+                      <button
+                        className="icon-button"
+                        aria-label={"Удалить активность " + a.name}
+                        disabled={busy}
+                        onClick={() =>
+                          act(async () => {
+                            await api("/activities/" + a.id, "DELETE");
+                            setActivities(await api("/activities?day=" + day));
+                          }, "Активность удалена")
+                        }
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  ))}
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      act(async () => {
+                        await api("/activities", "POST", {
+                          day,
+                          name: activityName.trim(),
+                          kcal: Number(burned),
+                        });
+                        setActivities(await api("/activities?day=" + day));
+                        setActivityName("");
+                        setBurned("");
+                      }, "Активность добавлена");
+                    }}
+                  >
+                    <div className="form-grid">
+                      <label>
+                        Активность
+                        <input
+                          required
+                          maxLength="80"
+                          placeholder="Например, прогулка"
+                          value={activityName}
+                          onChange={(e) => setActivityName(e.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Сожжено ккал
+                        <input
+                          required
+                          type="number"
+                          min="0.1"
+                          max="10000"
+                          step="0.1"
+                          placeholder="По данным трекера"
+                          value={burned}
+                          onChange={(e) => setBurned(e.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <button className="secondary" disabled={busy || !dayReady}>
+                      <Plus size={18} />
+                      Добавить активность
+                    </button>
+                  </form>
+                </section>
+              </div>
+              <section className="card meal-form" id="meal-form">
+                <span className="eyebrow">ЧТО БЫЛО В ТАРЕЛКЕ?</span>
+                <h2>Добавить еду</h2>
+                <button
+                  className="barcode-shortcut"
+                  onClick={() => navigate("Сканер")}
+                >
+                  <ScanBarcode />
+                  <span>Найти по штрихкоду</span>
+                  <ArrowUpRight size={18} />
+                </button>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    act(async () => {
+                      setDiary(
+                        await api("/diary", "POST", {
+                          product_id: Number(productId),
+                          day,
+                          meal,
+                          grams: Number(grams),
+                          portion_name:
+                            portions.find((p) => p.id === Number(portionId))
+                              ?.name || "",
+                        }),
+                      );
+                    }, "Добавлено в дневник");
+                  }}
+                >
+                  <label>
+                    Приём пищи
+                    <select
+                      value={meal}
+                      onChange={(e) => setMeal(e.target.value)}
+                    >
+                      {meals.map((n) => (
+                        <option key={n}>{n}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Продукт
+                    <select
+                      required
+                      value={productId}
+                      onChange={(e) => setProductId(e.target.value)}
+                    >
+                      <option value="">Выбери продукт</option>
+                      {products.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {selected && (
+                    <>
+                      <label>
+                        Сохранённая порция
+                        <select
+                          value={portionId}
+                          onChange={(e) => {
+                            setPortionId(e.target.value);
+                            const found = portions.find(
+                              (p) => p.id === Number(e.target.value),
+                            );
+                            if (found) setGrams(found.grams);
+                          }}
+                        >
+                          <option value="">Указать количество вручную</option>
+                          {portions.map((p) => (
+                            <option value={p.id} key={p.id}>
+                              {p.name} · {p.grams} г / мл
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Количество, г / мл
+                        <input
+                          type="number"
+                          required
+                          min="0.1"
+                          max="5000"
+                          step="0.1"
+                          value={grams}
+                          onChange={(e) => {
+                            setGrams(e.target.value);
+                            setPortionId("");
+                          }}
+                        />
+                      </label>
+                      <div className="portion-preview">
+                        <strong>
+                          {Math.round(
+                            (selected.kcal * Number(grams || 0)) / 100,
+                          )}
+                          <small> ккал</small>
+                        </strong>
+                        <span>в этой порции</span>
+                      </div>
+                      <p className="field-hint">
+                        Для значений на 100 г вводи граммы, на 100 мл —
+                        миллилитры.
+                      </p>
+                    </>
+                  )}
+                  <button
+                    className="primary wide"
+                    disabled={busy || !selected || !dayReady}
+                  >
+                    <Plus size={18} />
+                    Добавить в дневник
+                  </button>
+                </form>
+              </section>
+            </div>
+          </>
+        )}
+        {tab === "Продукты" && (
+          <div className="catalog-layout">
+            <section className="card">
+              <div className="section-heading">
+                <h2>
+                  Продукты{" "}
+                  <span className="count-badge">{products.length}</span>
+                </h2>
+                <Apple size={24} />
+              </div>
+              <label className="search-box">
+                <Search size={18} />
+                <input
+                  aria-label="Поиск продукта"
+                  placeholder="Найти в своём каталоге"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </label>
+              <p className="field-hint">
+                КБЖУ на 100 г / 100 мл. У исходных продуктов значения примерные.
+              </p>
+              {products
+                .filter((p) =>
+                  p.name.toLowerCase().includes(search.toLowerCase()),
+                )
+                .map((p) => (
+                  <div className="catalog-row" key={p.id}>
+                    <div>
+                      <strong>{p.name}</strong>
+                      <p>
+                        Б {p.protein} · Ж {p.fat} · У {p.carbs}
+                        {p.source === "openfoodfacts" && (
+                          <>
+                            {" "}
+                            ·{" "}
+                            <a
+                              href={p.source_url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open Food Facts
+                            </a>
+                          </>
+                        )}
+                      </p>
+                    </div>
+                    <span>
+                      {p.kcal}
+                      <small> ккал</small>
+                    </span>
+                    <button
+                      className="icon-button add-food"
+                      aria-label={"Выбрать " + p.name}
+                      onClick={() => imported(p)}
+                    >
+                      <Plus size={18} />
+                    </button>
+                  </div>
+                ))}
+              {!products.some((p) =>
+                p.name.toLowerCase().includes(search.toLowerCase()),
+              ) && (
+                <div className="empty-state">
+                  <h3>Пока ничего не нашли</h3>
+                  <p>Измени запрос или добавь свой продукт.</p>
+                </div>
+              )}
+            </section>
+            <div>
+              <section className="card">
+                <span className="eyebrow">ТВОЙ РЕЦЕПТ, ТВОИ ДАННЫЕ</span>
+                <h2>Свой продукт</h2>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    act(async () => {
+                      const p = await api("/products", "POST", {
+                        name: newProduct.name,
+                        ...Object.fromEntries(
+                          ["kcal", "protein", "fat", "carbs"].map((k) => [
+                            k,
+                            Number(newProduct[k]),
+                          ]),
+                        ),
+                      });
+                      setProducts((current) =>
+                        [...current, p].sort((a, b) =>
+                          a.name.localeCompare(b.name),
+                        ),
+                      );
+                      setProductId(String(p.id));
+                      setNewProduct(blankProduct);
+                    }, "Продукт сохранён");
+                  }}
+                >
+                  <label>
+                    Название
+                    <input
+                      required
+                      maxLength="80"
+                      value={newProduct.name}
+                      onChange={(e) =>
+                        setNewProduct({ ...newProduct, name: e.target.value })
+                      }
+                    />
+                  </label>
+                  <div className="form-grid">
+                    {[
+                      ["kcal", "Ккал"],
+                      ["protein", "Белки, г"],
+                      ["fat", "Жиры, г"],
+                      ["carbs", "Углеводы, г"],
+                    ].map(([key, label]) => (
+                      <label key={key}>
+                        {label}
+                        <input
+                          required
+                          type="number"
+                          min="0"
+                          max={key === "kcal" ? 1000 : 100}
+                          step="0.1"
+                          value={newProduct[key]}
+                          onChange={(e) =>
+                            setNewProduct({
+                              ...newProduct,
+                              [key]: e.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <button className="primary wide" disabled={busy}>
+                    Сохранить продукт
+                    <Plus size={18} />
+                  </button>
+                </form>
+              </section>
+              <section className="card">
+                <h2>Привычная порция</h2>
+                <p className="muted">Сохрани свой стакан или тарелку.</p>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    act(async () => {
+                      const p = await api("/portions", "POST", {
+                        product_id: Number(productId),
+                        name: portionName,
+                        grams: Number(portionGrams),
+                      });
+                      setPortions((current) => [...current, p]);
+                      setPortionName("");
+                    }, "Порция сохранена");
+                  }}
+                >
+                  <label>
+                    Продукт для порции
+                    <select
+                      required
+                      value={productId}
+                      onChange={(e) => setProductId(e.target.value)}
+                    >
+                      <option value="">Выбери продукт</option>
+                      {products.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Название порции
+                    <input
+                      required
+                      maxLength="50"
+                      placeholder="Моя кружка"
+                      value={portionName}
+                      onChange={(e) => setPortionName(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Количество в порции, г / мл
+                    <input
+                      required
+                      type="number"
+                      min="0.1"
+                      max="5000"
+                      step="0.1"
+                      value={portionGrams}
+                      onChange={(e) => setPortionGrams(e.target.value)}
+                    />
+                  </label>
+                  <button
+                    className="secondary wide"
+                    disabled={busy || !productId}
+                  >
+                    Сохранить порцию
+                  </button>
+                </form>
+              </section>
+            </div>
+          </div>
+        )}
+        <footer className="app-footer">
+          <span>
+            <Leaf size={14} />
+            NutriDay · Забота в простых вещах
+          </span>
+          <span>Версия 0.0.5</span>
+        </footer>
+      </main>
+    </div>
   );
 }
-
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById("root")).render(
+  <AuthGate>
+    {(user, logout, busy) => (
+      <App key={user.id} user={user} logout={logout} logoutBusy={busy} />
+    )}
+  </AuthGate>,
+);
+if ("serviceWorker" in navigator && import.meta.env.PROD)
+  navigator.serviceWorker.register("/sw.js").catch(() => {});

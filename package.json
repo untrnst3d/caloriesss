@@ -1,13 +1,17 @@
 {
   "name": "nutriday",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
+    "@zxing/browser": "^0.2.1",
+    "@zxing/library": "^0.23.0",
+    "lucide-react": "^1.65.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
