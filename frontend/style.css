@@ -37,3 +37,10 @@ nav { flex-wrap: wrap; }
 .profile-photo > div:last-child { min-width: 0; flex: 1; }
 .profile-photo input[type=file] { max-width: 100%; box-sizing: border-box; }
 @media (max-width: 600px) { .profile-photo { flex-direction: column; } }
+
+:root { color-scheme: light; accent-color: #174b35; }
+a, a:visited, button, select, input::file-selector-button { color: #174b35; }
+input { color: #252525; }
+input::file-selector-button { font: inherit; border: 1px solid #7b9b72; border-radius: 6px; background: #f2f7ee; padding: 8px 12px; }
+:focus-visible { outline: 2px solid #174b35; outline-offset: 3px; }
+body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
