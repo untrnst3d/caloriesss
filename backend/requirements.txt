@@ -1,0 +1,4 @@
+fastapi==0.141.1
+uvicorn==0.53.0
+Pillow>=11.3,<13
+psycopg[binary]==3.3.9
