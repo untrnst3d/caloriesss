@@ -8,3 +8,9 @@ __pycache__/
 *.sqlite3-journal
 *.sqlite3-wal
 *.sqlite3-shm
+
+.env
+.env.*
+!.env.example
+data/
+backups/

@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: nutriday
+    runtime: docker
+    plan: free
+    autoDeployTrigger: "off"
+    healthCheckPath: /api/health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: COOKIE_SECURE
+        value: "1"
+      - key: REQUIRE_DATABASE_URL
+        value: "1"
+      - key: DATABASE_URL
+        sync: false

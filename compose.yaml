@@ -1,0 +1,17 @@
+services:
+  nutriday:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: ""
+      REQUIRE_DATABASE_URL: "0"
+      APP_ENV: development
+      COOKIE_SECURE: "0"
+      PUBLIC_URL: http://localhost:8000
+      NUTRIDAY_DB: /data/nutriday.sqlite3
+    volumes:
+      - nutriday_data:/data
+    restart: unless-stopped
+volumes:
+  nutriday_data:
